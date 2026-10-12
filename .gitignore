@@ -1,0 +1,9 @@
+# 実データ・手元だけのものは入れない
+data/
+snapshots/
+*.local.*
+*.csv
+*.xlsx
+.env
+.DS_Store
+node_modules/

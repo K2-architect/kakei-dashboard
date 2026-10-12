@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="家計">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f4f4f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121211" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/svg+xml" href="icons/favicon.svg">
+<title>家計ダッシュボード</title>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<header>
+  <h1>家計ダッシュボード</h1>
+  <div class="meta"><span id="asof"></span><button class="icon" id="reload" type="button">更新</button></div>
+</header>
+<main>
+  <div id="warnings"></div>
+  <section class="tab active" id="tab-home"><div class="loading">読み込み中…</div></section>
+  <section class="tab" id="tab-plan"></section>
+  <section class="tab" id="tab-fin"></section>
+  <section class="tab" id="tab-tx"></section>
+  <div class="who" id="who" hidden><span id="whoText"></span><button class="icon" id="logout" type="button">ログアウト</button></div>
+</main>
+<nav class="tabs" id="nav">
+  <button type="button" data-tab="home" class="on"><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z"/></svg>ホーム</button>
+  <button type="button" data-tab="plan"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>予定</button>
+  <button type="button" data-tab="fin"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>財務</button>
+  <button type="button" data-tab="tx"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9"/></svg>取引<span class="badge" id="badge" style="display:none"></span></button>
+</nav>
+<div id="tip"></div>
+<div class="toast" id="toast"></div>
+
+<div class="gate" id="gate" hidden>
+  <img src="icons/apple-touch-icon.png" alt="">
+  <h1>家計ダッシュボード</h1>
+  <p id="gateMsg">Googleアカウントでログインしてください。</p>
+  <div id="gbtn"></div>
+  <button class="link" id="altLogin" type="button">うまくいかないときは、ページを移動してログイン</button>
+  <p id="gateNote" hidden>LINEなどのアプリの中で開くと、ログインできません。Safari で開き直してください。</p>
+</div>
+
+<script src="config.js"></script>
+<script src="assets/app.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer onload="appGisReady()"></script>
+</body>
+</html>
