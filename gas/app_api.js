@@ -2,7 +2,7 @@
  * 家計ダッシュボード（データ用API）
  *
  * 画面は GitHub Pages にあり、このファイル（app_api.gs）が画面からの POST を受けて、
- * app.gs の関数（appGetData・appSetCategory）を呼んで JSON で返します。
+ * app.gs の関数（appGetData・appSetCategory・appSetCategories）を呼んで JSON で返します。
  *
  * 公開：［デプロイ］→ 種類「ウェブアプリ」、次のユーザーとして実行「自分」、アクセスできるユーザー「全員」。
  *       誰でも URL には届くので、使ってよい人かどうかはこのファイルの中で確かめます。
@@ -40,6 +40,20 @@ const APP_API_ACTIONS = {
       if (err && /^対象の行が見つかりません/.test(err.message)) throw appApiError_('CONFLICT', err.message);
       throw err;
     }
+  },
+  'tx.setCategories': function (p) {
+    const list = p && p.changes;
+    const bad = appApiError_('BAD_REQUEST', 'カテゴリを選んでください。');
+    if (!Array.isArray(list) || !list.length || list.length > 500) throw bad;
+    return appSetCategories(list.map(function (c) {
+      if (!c || typeof c.cat !== 'string' || !c.cat.trim() || c.cat.length > 50 || c.cat === '未分類' || !Array.isArray(c.items) || c.items.length > 2000) throw bad;
+      return {
+        cat: c.cat, addRule: c.addRule === true, desc: c.desc == null ? '' : String(c.desc),
+        items: c.items.map(function (it) {
+          return { row: Number(it && it.row) || 0, id: !it || it.id == null ? '' : String(it.id), amount: Number(it && it.amount) || 0 };
+        })
+      };
+    }));
   }
 };
 

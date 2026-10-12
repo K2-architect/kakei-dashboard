@@ -33,6 +33,9 @@ let lastSet = null;
 ctx.appGetData = () => FAKE;
 ctx.appSetCategory = ch => { lastSet = ch; if (ch.id === 'none') throw new Error('対象の行が見つかりません。画面を更新してからやり直してください。'); if (ch.id === 'boom') throw new Error('内部の詳しい情報'); return { ok: true, ruleAdded: false, auto: 0 }; };
 
+let lastBulk = null;
+ctx.appSetCategories = list => { lastBulk = list; return { ok: true, updated: 2, skipped: 0, rulesAdded: 1, autoApplied: 0 }; };
+
 const post = body => JSON.parse(ctx.doPost({ postData: { contents: typeof body === 'string' ? body : JSON.stringify(body) } }).text);
 const future = () => String(Math.floor(Date.now() / 1000) + 3000);
 const goodInfo = over => ({ code: 200, body: Object.assign({ aud: CLIENT_ID, iss: 'https://accounts.google.com', exp: future(), email_verified: 'true', email: 'Taro@example.com' }, over) });
@@ -113,6 +116,23 @@ const tests = {
     const boom = post({ action: 'tx.setCategory', session: s, payload: { id: 'boom', cat: '食費' } });
     assert.strictEqual(boom.error.code, 'INTERNAL');
     assert.ok(boom.error.message.indexOf('内部') < 0);
+  },
+  'まとめて保存：決まった形に直して渡す。おかしな形は BAD_REQUEST'() {
+    lastBulk = null;
+    const changes = [{ cat: '食費', addRule: true, desc: 'テスト商店', extra: 'x', items: [{ row: '5', id: 7, amount: '1200', desc: 'y' }] }, { cat: '外食', desc: null, items: [] }];
+    assert.strictEqual(post({ action: 'tx.setCategories', payload: { changes: changes } }).error.code, 'AUTH_REQUIRED');
+    assert.strictEqual(lastBulk, null);
+    const s = login(goodInfo()).data.session;
+    const r = post({ action: 'tx.setCategories', session: s, payload: { changes: changes } });
+    assert.deepStrictEqual(r.data, { ok: true, updated: 2, skipped: 0, rulesAdded: 1, autoApplied: 0 });
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(lastBulk)), [
+      { cat: '食費', addRule: true, desc: 'テスト商店', items: [{ row: 5, id: '7', amount: 1200 }] },
+      { cat: '外食', addRule: false, desc: '', items: [] }
+    ]);
+    lastBulk = null;
+    [{}, { changes: [] }, { changes: 'x' }, { changes: [null] }, { changes: [{ cat: '', items: [] }] }, { changes: [{ cat: '未分類', items: [] }] }, { changes: [{ cat: '食費' }] }]
+      .forEach(p => assert.strictEqual(post({ action: 'tx.setCategories', session: s, payload: p }).error.code, 'BAD_REQUEST'));
+    assert.strictEqual(lastBulk, null);
   },
   'doGet はデータを出さない'() {
     assert.strictEqual(ctx.doGet().text, 'このURLはアプリのデータ用です。');

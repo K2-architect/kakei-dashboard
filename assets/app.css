@@ -138,3 +138,31 @@ table.tbl th:first-child, table.tbl td:first-child { text-align: left; }
 .gate #gbtn { min-height: 44px; color-scheme: light; }
 button.link { border: 0; background: transparent; color: var(--accent); font-size: 13px; padding: 8px; cursor: pointer; text-decoration: underline; }
 .who { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--text-3); padding: 8px 0 20px; }
+
+/* ---------- 取引：未分類を利用先ごとにまとめて選ぶ ---------- */
+.bulk { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.grp {
+  display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; margin: 0 0 8px; padding: 12px 14px 12px 12px;
+  background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
+}
+.grp.s-suggest { border-left-color: var(--warning); }
+.grp.s-user { border-left-color: var(--good); }
+.grp > .l { min-width: 0; }
+.grp > .l .t { font-weight: 600; overflow-wrap: anywhere; }
+.grp > .r { text-align: right; white-space: nowrap; font-weight: 600; }
+.grp .big { font-size: 19px; }
+.grp .ctl, .grp .why, .grp details { grid-column: 1 / -1; }
+.grp .ctl { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.grp select { max-width: 100%; }
+.grp .why { display: none; font-size: 12px; }
+.grp.s-suggest .why:not(:empty) { display: block; }
+.grp details .row { padding: 5px 0; font-size: 13px; }
+.mark { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--text-2); white-space: nowrap; }
+.mark:empty { display: none; }
+.grp.s-user .mark { color: var(--good-text); }
+.savebar { position: fixed; left: 0; right: 0; bottom: 58px; z-index: 9; background: var(--surface); border-top: 1px solid var(--border); }
+.savebar .in { max-width: 720px; margin: 0 auto; padding: 8px 16px; display: flex; gap: 6px 12px; align-items: center; flex-wrap: wrap; }
+.savebar .btn { flex: 1 1 220px; padding: 10px; }
+/* 下の固定バーに一覧やお知らせが隠れないようにする */
+body:has(#tab-tx.active .savebar) { padding-bottom: calc(176px + env(safe-area-inset-bottom)); }
+body:has(#tab-tx.active .savebar) .toast { bottom: calc(176px + env(safe-area-inset-bottom)); }

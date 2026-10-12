@@ -11,7 +11,7 @@
  *   ホーム … 今期（締日の翌日〜次の締日）にあと使える額（予算方式）と、資金繰りの余裕
  *   予定   … 次の引落までの入出金予定と残高の見込み
  *   財務   … 現在の残高・純資産、月ごとの推移と収支
- *   取引   … 未分類のカテゴリ付け（分類ルールへの追加も）、最近の取引
+ *   取引   … 未分類のカテゴリ付け（利用先ごとにまとめて一括保存。分類ルールへの追加も）、最近の取引
  *
  * 設定は「アプリ設定」シート（初回アクセス時に自動で作成）。
  */
@@ -97,6 +97,70 @@ function appSetCategory(ch) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * カテゴリの一括付け直し（app_api.gs の tx.setCategories から呼ぶ）。1グループ＝1要素
+ * @param {Array<{cat:string,addRule:boolean,desc:string,items:Array<{row:number,id:string,amount:number}>}>} changes
+ */
+function appSetCategories(changes) {
+  const lock = LockService.getDocumentLock();
+  lock.waitLock(30000);
+  try {
+    const ss = SpreadsheetApp.getActive();
+    const tx = ss.getSheetByName(APP.TX);
+    const n = appLastRow_(tx) - 1;
+    const rows = n >= 1 ? tx.getRange(2, 1, n, 11).getValues() : [];
+    const rs = ss.getSheetByName(APP.RULES);
+    const rLast = appLastRow_(rs);
+    const ruleKeys = rLast >= 5 ? rs.getRange(5, 1, rLast - 4, 1).getValues().map(function (r) { return r[0]; }) : [];
+    const plan = appPlanCategories_(changes, rows, ruleKeys);
+    if (plan.updated + plan.autoApplied) tx.getRange(2, 3, n, 1).setValues(plan.cats);
+    if (plan.newRules.length) rs.getRange(Math.max(rLast, 4) + 1, 1, plan.newRules.length, 3).setValues(plan.newRules);
+    return { ok: true, updated: plan.updated, skipped: plan.skipped, rulesAdded: plan.newRules.length, autoApplied: plan.autoApplied };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * 一括付け直しの中身を決める（シートに触らない純粋な関数）
+ * @param {Array} changes appSetCategories と同じ
+ * @param {Array<Array>} rows 取引シートの2行目から下（A〜K列）
+ * @param {Array} ruleKeys 分類ルールのキーワード（A列）
+ * @return {{cats:Array<Array>,updated:number,skipped:number,autoApplied:number,newRules:Array<Array>}} cats は書き戻すC列
+ */
+function appPlanCategories_(changes, rows, ruleKeys) {
+  const cats = rows.map(function (r) { return [r[2]]; });
+  const byId = new Map();
+  rows.forEach(function (r, i) { const id = String(r[10]); if (id && !byId.has(id)) byId.set(id, i); });
+  const known = new Set(ruleKeys.map(appNorm_));
+  const newRules = [], autoKeys = [];
+  let updated = 0, skipped = 0, autoApplied = 0;
+  changes.forEach(function (ch) {
+    const nd = appNorm_(ch.desc);
+    ch.items.forEach(function (it) {
+      // まず行番号を見て、取込ID（なければ利用先＋金額）が合うか確かめる。ずれていたら取込IDで探し直す
+      const id = it.id ? String(it.id) : '', r = rows[it.row - 2];
+      let i = -1;
+      if (r && (id ? String(r[10]) === id : appNorm_(r[6]) === nd && Number(r[3]) === Number(it.amount))) i = it.row - 2;
+      if (i < 0 && id && byId.has(id)) i = byId.get(id);
+      // 見つからない行と、ほかで先に分類された行は飛ばす
+      if (i < 0 || cats[i][0] !== '未分類') { skipped++; return; }
+      cats[i][0] = ch.cat; updated++;
+    });
+    if (!ch.addRule || appNoMerchant_(nd)) return;
+    autoKeys.push({ key: nd, cat: ch.cat });
+    if (!known.has(nd)) { known.add(nd); newRules.push([String(ch.desc).trim(), ch.cat, 'アプリから追加（一括）']); }
+  });
+  // 同じ利用先を含む残りの未分類もまとめて付け直す
+  if (autoKeys.length) cats.forEach(function (c, i) {
+    if (c[0] !== '未分類') return;
+    const d = appNorm_(rows[i][6]);
+    const hit = autoKeys.filter(function (k) { return d.indexOf(k.key) >= 0; })[0];
+    if (hit) { c[0] = hit.cat; autoApplied++; }
+  });
+  return { cats: cats, updated: updated, skipped: skipped, autoApplied: autoApplied, newRules: newRules };
 }
 
 /* ───────── シートを読む ───────── */
@@ -362,6 +426,7 @@ function appCompute_(raw, todayStr) {
   const sorted = tx.slice().sort(function (a, b) { return b.d - a.d || b.row - a.row; });
   const pick = function (t) { return { row: t.row, id: t.id, date: t.date, kind: t.kind, cat: t.cat, amount: t.amt, from: t.from, to: t.to, desc: t.desc, src: t.src }; };
   const uncats = sorted.filter(function (t) { return t.cat === '未分類'; });
+  const expCats = raw.cats.filter(function (r) { return String(r[1]) === '支出'; }).map(function (r) { return String(r[0]); });
 
   return {
     asOf: todayStr,
@@ -377,9 +442,81 @@ function appCompute_(raw, todayStr) {
     finance: { assets: Math.round(nowSum.assets), liabilities: Math.round(nowSum.liabilities), net: Math.round(nowSum.net),
       cash: Math.round(nowSum.cash), card: Math.round(nowSum.card), accounts: accounts, history: history },
     tx: { uncategorized: uncats.slice(0, 300).map(pick), uncategorizedCount: uncats.length, recent: sorted.slice(0, APP.RECENT).map(pick),
-      categories: raw.cats.filter(function (r) { return String(r[1]) === '支出'; }).map(function (r) { return String(r[0]); }) },
+      categories: expCats, uncatGroups: appUncatGroups_(tx, uncats, expCats) },
     warnings: warnings,
   };
+}
+
+/* ───────── 未分類のまとめと、カテゴリの推定（シートに触らない） ───────── */
+
+// 店名が入らない利用先。まとめずに1件ずつ出し、分類ルールにも追加しない
+const APP_NO_MERCHANT = ['海外利用分'];
+// 店名からカテゴリを推定する手がかり（上から順に見る。足すときはここに足す）
+const APP_SUGGEST = [
+  { cat: '外食', keys: ['エア-', 'スクエア', 'カフエ', 'コ-ヒ-', 'バ-ガ-', 'ラ-メン', 'スシ', 'ヤキトリ', 'イザカヤ', 'シヨクドウ',
+    'レストラン', 'ダイニング', 'バル', 'ビストロ', 'ピツツエリア', 'サカバ', 'ベ-カリ-'] },
+  { cat: '食費', keys: ['自販機'] },
+  { cat: '特別費', keys: ['ホテル', 'ホステル'] },
+  { cat: 'サブスク', keys: ['海外利用分'] },
+];
+// 外食でも1件あたりこの額以上なら、飲み会・会食とみて交際費を候補にする
+const APP_SUGGEST_PARTY = { from: '外食', to: '交際費', min: 10000 };
+
+function appNoMerchant_(descNorm) {
+  return !descNorm || APP_NO_MERCHANT.some(function (k) { return descNorm.indexOf(appNorm_(k)) >= 0; });
+}
+/** 推定で比べるときの表記（長音とハイフン、小さいカナと大きいカナを同じとみなす） */
+function appLoose_(s) {
+  const small = 'ァィゥェォッャュョヮ', big = 'アイウエオツヤユヨワ';
+  return appNorm_(s).replace(/[ー‐‑–—―−]/g, '-').replace(/[ァィゥェォッャュョヮ]/g, function (c) { return big.charAt(small.indexOf(c)); });
+}
+/**
+ * 推定カテゴリ。known は「正規化した利用先 → 過去にいちばん多く付けたカテゴリ」
+ * @return {{cat:string,reason:string}} 候補がなければ cat は空
+ */
+function appSuggest_(descNorm, amount, known) {
+  let cat = (known && known[descNorm]) || '', reason = cat ? '前にも「' + cat + '」に分類' : '';
+  if (!cat) {
+    const d = appLoose_(descNorm);
+    APP_SUGGEST.some(function (g) {
+      const hit = g.keys.filter(function (k) { return d.indexOf(appLoose_(k)) >= 0; })[0];
+      if (hit) { cat = g.cat; reason = '店名に「' + hit + '」を含む'; }
+      return !!hit;
+    });
+  }
+  const p = APP_SUGGEST_PARTY;
+  if (cat === p.from && amount >= p.min) { cat = p.to; reason = '1件あたり' + appYen_(p.min) + '以上の' + p.from; }
+  return { cat: cat, reason: reason };
+}
+/** 未分類を利用先ごとにまとめる。uncats は新しい順、categories は支出のカテゴリ */
+function appUncatGroups_(tx, uncats, categories) {
+  const seen = {}, known = {};
+  tx.forEach(function (t) {
+    if (!t.desc || t.cat === '未分類' || categories.indexOf(t.cat) < 0) return;
+    const k = appNorm_(t.desc);
+    if (!seen[k]) seen[k] = {};
+    seen[k][t.cat] = (seen[k][t.cat] || 0) + 1;
+  });
+  Object.keys(seen).forEach(function (k) {
+    known[k] = Object.keys(seen[k]).sort(function (a, b) { return seen[k][b] - seen[k][a]; })[0];
+  });
+  const byKey = {}, groups = [];
+  uncats.forEach(function (t) {
+    const key = appNorm_(t.desc), solo = appNoMerchant_(key);
+    let g = solo ? null : byKey[key];
+    if (!g) {
+      g = { key: key, desc: t.desc, count: 0, total: 0, first: t.date, last: t.date, items: [], suggest: '', suggestReason: '', noMerchant: solo };
+      groups.push(g);
+      if (!solo) byKey[key] = g;
+    }
+    g.count++; g.total += t.amt; g.first = t.date;
+    g.items.push({ row: t.row, id: t.id, date: t.date, amount: t.amt });
+  });
+  groups.forEach(function (g) {
+    const s = appSuggest_(g.key, g.total / g.count, known);
+    if (s.cat && s.cat !== '未分類' && categories.indexOf(s.cat) >= 0) { g.suggest = s.cat; g.suggestReason = s.reason; }
+  });
+  return groups.sort(function (a, b) { return b.total - a.total; });
 }
 
 /* ───────── 日付・数値の小物（日付は「1970/1/1からの日数」で扱う） ───────── */

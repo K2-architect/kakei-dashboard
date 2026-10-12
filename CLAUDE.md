@@ -6,7 +6,7 @@
 
 1. **スプレッドシートのデータを書き換える前に、必ず本人に確認をとる。**
    - 読むだけの操作は確認なしでよい。
-   - 書き込み API（`tx.setCategory`）のテストは、確認をとったうえで行い、テストした行は元に戻す。
+   - 書き込み API（`tx.setCategory`・`tx.setCategories`）のテストは、確認をとったうえで行い、テストした行は元に戻す。
 2. **お金のデータを外に出さない。** このリポジトリは公開。
    - 実データ・スナップショット・実際の金額が写ったスクリーンショット・スプレッドシートの中身は、コミットしない。
    - テストと見本のデータは架空の数字で作る（`tests/make-demo.js`）。
@@ -29,6 +29,7 @@
 
 ```
 node tests/api.test.js     # API と認証（架空の値）
+node tests/tx.test.js      # 取引タブ：利用先ごとのまとめ・カテゴリの推定・一括保存（架空の値）
 node tests/make-demo.js    # 計算の確認と、見本データ assets/demo-data.js の作り直し
 python3 -m http.server     # http://localhost:8000/?demo=1 で見本データの画面を見る
 ```

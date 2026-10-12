@@ -5,6 +5,9 @@
   var D = null;          // サーバーから受け取ったデータ
   var txView = 'uncat';  // 取引タブ：uncat / recent
   var uncatLimit = 40;
+  var picks = {};          // 未分類のグループごとの選択 { cat, by: ''（未選択）/ 'suggest'（推定のまま）/ 'user'（自分で選んだ）, rule, open }
+  var keepSuggest = true;  // 推定のままの分も保存する
+  var saving = false;
 
   /* ---------- 共通 ---------- */
   var yen = function (n) { n = Math.round(n || 0); return (n < 0 ? '−' : '') + '¥' + Math.abs(n).toLocaleString('ja-JP'); };
@@ -151,7 +154,7 @@
     $('asof').textContent = '更新中…';
     (DEMO ? loadDemo() : api('dashboard.get')).then(function (d) { D = d; render(); }, function (err) {
       var msg = err && err.message || err;
-      if (D) { $('asof').textContent = md(D.asOf) + '（' + wd(D.asOf) + '）時点'; toast(msg); return; }
+      if (D) { $('asof').textContent = md(D.asOf) + '（' + wd(D.asOf) + '）時点'; toast(msg); saving = false; syncBar(); return; }
       $('tab-home').innerHTML = '<div class="warn"><b>読み込めませんでした</b>' + esc(msg) + '</div>'; $('asof').textContent = '';
     });
   }
@@ -166,6 +169,11 @@
   }
 
   function render() {
+    saving = false;
+    // 選択は、まだ未分類に残っているグループの分だけ持ち越す
+    var kept = {};
+    (D.tx.uncatGroups || []).forEach(function (g) { kept[gid(g)] = pickOf(g); });
+    picks = kept;
     $('asof').textContent = md(D.asOf) + '（' + wd(D.asOf) + '）時点';
     $('warnings').innerHTML = (D.warnings || []).length
       ? '<div class="warn"><b>データの確認が必要です</b>' + D.warnings.map(esc).join('<br>') + '</div>' : '';
@@ -361,23 +369,77 @@
   }
 
   /* ---------- 取引 ---------- */
+  function gid(g) { return g.noMerchant ? 'n:' + (g.items[0].id || g.items[0].row) : 'g:' + g.key; }
+  function pickOf(g) {
+    var id = gid(g);
+    if (!picks[id]) picks[id] = { cat: g.suggest || '', by: g.suggest ? 'suggest' : '', rule: true, open: false };
+    return picks[id];
+  }
+  function shownGroups() { return (D.tx.uncatGroups || []).slice(0, uncatLimit); }
+  // 保存するグループ（画面に出ている分だけ）
+  function targets() {
+    return shownGroups().filter(function (g) { var p = pickOf(g); return p.cat && (p.by === 'user' || keepSuggest); });
+  }
+  function syncCard(box, g) {
+    var p = pickOf(g), st = !p.cat ? 's-none' : p.by === 'user' ? 's-user' : 's-suggest';
+    box.className = 'grp ' + st + (g.noMerchant ? ' solo' : '');
+    box.querySelector('.mark').textContent = { 's-none': '', 's-suggest': '推定', 's-user': '選択済み' }[st];
+  }
+  function syncBar() {
+    var b = $('saveAll'); if (!b) return;
+    var ts = targets(), n = ts.reduce(function (a, g) { return a + g.count; }, 0);
+    b.disabled = saving || !ts.length;
+    b.textContent = saving ? '保存中…' : 'まとめて保存（' + n + '件・' + ts.length + 'グループ）';
+  }
+  function groupCard(g, i, cats) {
+    var p = pickOf(g), h = '<div class="grp" data-i="' + i + '">';
+    if (g.noMerchant) {
+      h += '<div class="l"><div class="t big num">' + md(g.last) + '（' + wd(g.last) + '）</div><div class="sub muted">店名なし（明細で確認）' + (g.desc ? '・' + esc(g.desc) : '') + '</div></div>'
+        + '<div class="r big num">' + yen(g.total) + '</div>';
+    } else {
+      h += '<div class="l"><div class="t">' + esc(g.desc) + '</div><div class="sub muted num">' + g.count + '件・' + (g.first === g.last ? md(g.last) : md(g.first) + '〜' + md(g.last)) + '</div></div>'
+        + '<div class="r num">' + yen(g.total) + '</div>';
+    }
+    h += '<div class="ctl"><select aria-label="カテゴリ"><option value="">カテゴリを選ぶ</option>'
+      + cats.map(function (c) { return '<option' + (c === p.cat ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select><span class="mark"></span>'
+      + (g.noMerchant ? '' : '<label class="chk"><input type="checkbox"' + (p.rule ? ' checked' : '') + '>次からも自動で分類</label>') + '</div>';
+    h += '<div class="why sub muted">' + esc(g.suggestReason) + '</div>';
+    if (g.count > 1) {
+      h += '<details' + (p.open ? ' open' : '') + '><summary>明細を見る</summary><div class="rows">';
+      g.items.forEach(function (x) { h += '<div class="row"><div class="l">' + md(x.date) + '（' + wd(x.date) + '）</div><div class="r num">' + yen(x.amount) + '</div></div>'; });
+      h += '</div></details>';
+    }
+    return h + '</div>';
+  }
+  function saveAll() {
+    var ts = targets();
+    if (saving || !ts.length) return;
+    if (DEMO) { toast('（見本のため保存しません）'); return; }
+    var changes = ts.map(function (g) {
+      var p = pickOf(g);
+      return { cat: p.cat, addRule: !g.noMerchant && p.rule, desc: g.desc, items: g.items.map(function (x) { return { row: x.row, id: x.id, amount: x.amount }; }) };
+    });
+    saving = true; syncBar();
+    api('tx.setCategories', { changes: changes }).then(function (r) {
+      toast((r.updated + r.autoApplied) + '件を分類しました（ルール' + r.rulesAdded + '件追加）' + (r.skipped ? '。' + r.skipped + '件は分類済みのため飛ばしました' : ''));
+      load();
+    }, function (err) { saving = false; syncBar(); toast('保存できませんでした：' + (err && err.message || err)); });
+  }
   function renderTx() {
     var t = D.tx, h = '';
+    var groups = t.uncatGroups || [], shown = shownGroups();
     h += '<div class="seg"><button type="button" data-v="uncat" class="' + (txView === 'uncat' ? 'on' : '') + '">未分類（' + t.uncategorizedCount + '）</button>'
       + '<button type="button" data-v="recent" class="' + (txView === 'recent' ? 'on' : '') + '">最近の取引</button></div>';
     if (txView === 'uncat') {
-      h += '<div class="card">';
-      if (!t.uncategorized.length) h += '<div class="muted">未分類はありません</div>';
-      var opts = t.categories.filter(function (c) { return c !== '未分類'; }).map(function (c) { return '<option>' + esc(c) + '</option>'; }).join('');
-      t.uncategorized.slice(0, uncatLimit).forEach(function (x, i) {
-        h += '<div class="tx-edit" data-i="' + i + '"><div class="l"><div class="t">' + esc(x.desc || '（摘要なし）') + '</div><div class="sub muted">' + md(x.date) + '・' + esc(x.from) + '</div></div>'
-          + '<div class="r num">' + yen(x.amount) + '</div>'
-          + '<div class="ctl"><select aria-label="カテゴリ"><option value="">カテゴリを選ぶ</option>' + opts + '</select>'
-          + '<label class="chk"><input type="checkbox"' + (/海外利用分/.test(x.desc) ? '' : ' checked') + '>同じ利用先は次からこのカテゴリ</label>'
-          + '<button class="btn" type="button" disabled>保存</button></div></div>';
-      });
-      if (t.uncategorized.length > uncatLimit) h += '<div style="text-align:center;padding-top:10px"><button class="icon" type="button" id="more">さらに表示（残り' + (t.uncategorized.length - uncatLimit) + '件）</button></div>';
-      h += '</div>';
+      if (!groups.length) h += '<div class="card"><div class="muted">未分類はありません</div></div>';
+      else {
+        var cats = t.categories.filter(function (c) { return c !== '未分類'; });
+        h += '<div class="bulk"><button class="icon" type="button" id="fixAll">推定をすべて確定</button><button class="icon" type="button" id="clearAll">選択をすべて解除</button></div>';
+        shown.forEach(function (g, i) { h += groupCard(g, i, cats); });
+        if (groups.length > uncatLimit) h += '<div style="text-align:center;padding-top:4px"><button class="icon" type="button" id="more">さらに表示（残り' + (groups.length - uncatLimit) + 'グループ）</button></div>';
+        h += '<div class="savebar" id="savebar"><div class="in"><label class="chk"><input type="checkbox" id="keepSug"' + (keepSuggest ? ' checked' : '') + '>推定のままの分も保存する</label>'
+          + '<button class="btn" type="button" id="saveAll" disabled>まとめて保存</button></div></div>';
+      }
     } else {
       h += '<div class="card"><div class="rows">';
       t.recent.forEach(function (x) {
@@ -390,20 +452,21 @@
     var el = $('tab-tx'); el.innerHTML = h;
     Array.prototype.forEach.call(el.querySelectorAll('.seg button'), function (b) { b.addEventListener('click', function () { txView = b.getAttribute('data-v'); renderTx(); }); });
     var more = $('more'); if (more) more.addEventListener('click', function () { uncatLimit += 40; renderTx(); });
-    Array.prototype.forEach.call(el.querySelectorAll('.tx-edit'), function (box) {
-      var sel = box.querySelector('select'), btn = box.querySelector('button'), chk = box.querySelector('input');
-      sel.addEventListener('change', function () { btn.disabled = !sel.value; });
-      btn.addEventListener('click', function () {
-        var x = t.uncategorized[Number(box.getAttribute('data-i'))];
-        btn.disabled = true; btn.textContent = '保存中…';
-        var payload = { row: x.row, id: x.id, desc: x.desc, amount: x.amount, cat: sel.value, addRule: chk.checked };
-        if (DEMO) { toast('（見本のため保存しません）'); btn.disabled = false; btn.textContent = '保存'; return; }
-        api('tx.setCategory', payload).then(function (r) {
-          toast('「' + sel.value + '」にしました' + (r.auto > 1 ? '（同じ利用先 ' + r.auto + '件も）' : '') + (r.ruleAdded ? '。分類ルールに追加しました' : ''));
-          load();
-        }, function (err) { btn.disabled = false; btn.textContent = '保存'; toast('保存できませんでした：' + (err && err.message || err)); });
-      });
+    if (!$('savebar')) return;
+    $('savebar').style.bottom = $('nav').offsetHeight + 'px';
+    Array.prototype.forEach.call(el.querySelectorAll('.grp'), function (box) {
+      var g = shown[Number(box.getAttribute('data-i'))], p = pickOf(g);
+      var sel = box.querySelector('select'), chk = box.querySelector('.chk input'), det = box.querySelector('details');
+      sel.addEventListener('change', function () { p.cat = sel.value; p.by = sel.value ? 'user' : ''; syncCard(box, g); syncBar(); });
+      if (chk) chk.addEventListener('change', function () { p.rule = chk.checked; });
+      if (det) det.addEventListener('toggle', function () { p.open = det.open; });
+      syncCard(box, g);
     });
+    $('fixAll').addEventListener('click', function () { shown.forEach(function (g) { var p = pickOf(g); if (p.cat) p.by = 'user'; }); renderTx(); });
+    $('clearAll').addEventListener('click', function () { shown.forEach(function (g) { var p = pickOf(g); p.cat = ''; p.by = ''; }); renderTx(); });
+    $('keepSug').addEventListener('change', function () { keepSuggest = this.checked; syncBar(); });
+    $('saveAll').addEventListener('click', saveAll);
+    syncBar();
   }
 
   renderWho();
